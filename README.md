@@ -18,89 +18,139 @@ Winters model to the entire dataset and make future predictions
 ### PROGRAM:
 ```
 import pandas as pd
-import numpy as np
 import matplotlib.pyplot as plt
-from sklearn.model_selection import train_test_split
-from sklearn.linear_model import LinearRegression
+from statsmodels.tsa.holtwinters import ExponentialSmoothing
+from sklearn.preprocessing import MinMaxScaler
 from sklearn.metrics import mean_absolute_error, mean_squared_error
-data = pd.read_csv("World_Population.csv")
+from statsmodels.tsa.seasonal import seasonal_decompose
+import numpy as np
+import warnings
+warnings.filterwarnings("ignore")
 
-data.columns = data.columns.str.strip()
+# Load dataset
+data = pd.read_csv('/content/jee_mains_2013_to_2025_top_30_ranks.csv')
 
-possible_cols = [col for col in data.columns if "Pop" in col or "pop" in col]
-if not possible_cols:
-    raise ValueError("No column found with 'Population' in its name.")
-pop_col = possible_cols[0]
+# Focus on 'Year' and 'Total_Marks'
+jee_data = data[['Year', 'Total_Marks']]
 
-for col in [pop_col, "Fert. Rate", "Med. Age", "World Share"]:
-    if col in data.columns:
-        data[col] = (
-            data[col]
-            .astype(str)
-            .str.replace(",", "")
-            .str.replace("%", "")
-            .str.replace(" ", "")
-        )
-        data[col] = pd.to_numeric(data[col], errors="coerce")
+# Step 1: Aggregate by Year (average Total Marks)
+jee_yearly = jee_data.groupby('Year')['Total_Marks'].mean().reset_index()
 
-data = data.dropna(subset=[pop_col, "Fert. Rate", "Med. Age", "World Share"])
+# Convert 'Year' to datetime for time-series
+jee_yearly['Date'] = pd.to_datetime(jee_yearly['Year'], format='%Y')
+jee_yearly.set_index('Date', inplace=True)
 
-X = data[["Fert. Rate", "Med. Age", "World Share"]]
-y = data[pop_col]
+# Step 2: Resample yearly (though data already yearly, this keeps structure)
+jee_yearly = jee_yearly.resample('YS').mean()
 
-X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+# Preview
+print(jee_yearly.head())
 
-model = LinearRegression()
-model.fit(X_train, y_train)
+# Step 3: Plot original data
+jee_yearly.plot(figsize=(10, 6))
+plt.title('Average JEE Total Marks per Year (Top 30)')
+plt.ylabel('Average Total Marks')
+plt.xlabel('Year')
+plt.grid(True)
+plt.show()
 
-y_pred_test = model.predict(X_test)
-data["Predicted Population"] = model.predict(X)
+# Step 4: Scale the Total Marks column
+scaler = MinMaxScaler()
+scaled_marks = scaler.fit_transform(jee_yearly['Total_Marks'].values.reshape(-1, 1)).flatten()
 
-mae = mean_absolute_error(y_test, y_pred_test)
-rmse = np.sqrt(mean_squared_error(y_test, y_pred_test))
+# Create time series
+scaled_data = pd.Series(scaled_marks, index=jee_yearly.index)
 
-print("\nModel Performance Metrics:")
-print(f"Mean Absolute Error (MAE): {mae:,.2f}")
-print(f"Root Mean Square Error (RMSE): {rmse:,.2f}")
+# Step 5: Plot scaled data
+plt.figure(figsize=(10, 6))
+scaled_data.plot()
+plt.title('Scaled JEE Total Marks (Top 30)')
+plt.ylabel('Scaled Value')
+plt.xlabel('Year')
+plt.grid(True)
+plt.show()
 
-test_results = pd.DataFrame({
-    "Actual Population": y_test,
-    "Predicted Population": y_pred_test
-}).reset_index(drop=True)
+# Step 6: Decompose data to view trend/seasonality
+if len(scaled_data) >= 6:  # Decomposition needs enough data points
+    decomposition = seasonal_decompose(scaled_data, model="additive", period=3)
+    decomposition.plot()
+    plt.show()
+
+# Step 7: Train-Test Split (80-20)
+train_data = scaled_data[:int(len(scaled_data) * 0.8)]
+test_data = scaled_data[int(len(scaled_data) * 0.8):]
 
 plt.figure(figsize=(10, 6))
-plt.plot(test_results["Actual Population"].values, label="Actual", marker='o', color='blue')
-plt.plot(test_results["Predicted Population"].values, label="Predicted", marker='x', color='red')
-plt.title("Test Data: Actual vs Predicted Population")
-plt.xlabel("Sample Index")
-plt.ylabel("Population")
+train_data.plot(label='Train Data')
+test_data.plot(label='Test Data')
 plt.legend()
-plt.grid(True, linestyle='--', alpha=0.6)
+plt.title('Train-Test Split')
+plt.grid(True)
 plt.show()
 
-sorted_data = data.sort_values(by=pop_col, ascending=False).reset_index(drop=True)
+# Step 8: Holt-Winters Model
+model_add = ExponentialSmoothing(train_data, trend='add', seasonal='add', seasonal_periods=3).fit()
 
-plt.figure(figsize=(12, 6))
-plt.plot(sorted_data[pop_col].values, label="Actual Population", marker='o', color='green')
-plt.plot(sorted_data["Predicted Population"].values, label="Predicted Population", marker='x', color='orange')
-plt.title("Final Prediction: Actual vs Predicted Population (All Countries)")
-plt.xlabel("Country Index (sorted by actual population)")
-plt.ylabel("Population")
+# Forecast for test period
+test_predictions = model_add.forecast(steps=len(test_data))
+
+# Plot predictions
+plt.figure(figsize=(10, 6))
+train_data.plot(label='Train Data')
+test_data.plot(label='Test Data')
+test_predictions.plot(label='Predictions', linestyle='--')
 plt.legend()
-plt.grid(True, linestyle='--', alpha=0.6)
+plt.title('Holt-Winters Model Predictions (JEE Marks)')
+plt.grid(True)
 plt.show()
+
+# Step 9: Evaluate Model
+rmse = np.sqrt(mean_squared_error(test_data, test_predictions))
+mae = mean_absolute_error(test_data, test_predictions)
+print(f'RMSE: {rmse:.4f}')
+print(f'MAE: {mae:.4f}')
+
+# Step 10: Train final model on full dataset
+final_model = ExponentialSmoothing(scaled_data, trend='add', seasonal='add', seasonal_periods=3).fit()
+
+# Forecast next 3 years
+final_predictions = final_model.forecast(steps=3)
+
+# Inverse transform back to original marks scale
+forecast_original = scaler.inverse_transform(final_predictions.values.reshape(-1, 1)).flatten()
+
+# Future years for plotting
+future_years = pd.date_range(start=jee_yearly.index[-1] + pd.DateOffset(years=1), periods=3, freq='YS')
+
+# Step 11: Plot results
+plt.figure(figsize=(10, 6))
+jee_yearly['Total_Marks'].plot(label='Actual Data')
+plt.plot(future_years, forecast_original, label='Future Predictions', linestyle='--', marker='o')
+plt.legend()
+plt.title('Forecasted Average JEE Total Marks (Next 3 Years)')
+plt.ylabel('Average Total Marks')
+plt.xlabel('Year')
+plt.grid(True)
+plt.show()
+
+# Step 12: Print predicted values
+forecast_df = pd.DataFrame({
+    'Year': future_years.year,
+    'Predicted_Avg_Total_Marks': forecast_original
+})
+print("\nPredicted Average JEE Total Marks for Next 3 Years:")
+print(forecast_df)
+
 ```
 
 ### OUTPUT:
+<img width="659" height="414" alt="Screenshot 2025-10-27 224606" src="https://github.com/user-attachments/assets/5d9afde4-b3a7-4316-b988-41de1d56b71a" />
+<img width="846" height="547" alt="image" src="https://github.com/user-attachments/assets/86689160-b6aa-42f8-8fcf-9a5f69fbf9ea" />
+<img width="804" height="615" alt="Screenshot 2025-10-27 224753" src="https://github.com/user-attachments/assets/8ba04930-0f21-4f9f-8f8d-494a5b4308d3" />
+<img width="826" height="547" alt="image" src="https://github.com/user-attachments/assets/76f94152-9424-48bc-8da7-412ced16646d" />
+<img width="826" height="547" alt="image" src="https://github.com/user-attachments/assets/f85aec90-9b93-4cb3-a709-4796bf5658b4" />
+<img width="1105" height="739" alt="Screenshot 2025-10-27 224809" src="https://github.com/user-attachments/assets/11a91d8c-618b-47c2-bf9f-f2f0edb9a771" />
 
-TEST_PREDICTION
-
-<img width="846" height="545" alt="download" src="https://github.com/user-attachments/assets/f3822f71-6b4e-47a0-989d-d4c467386edf" />
-
-
-FINAL_PREDICTION
-
-<img width="1001" height="545" alt="download" src="https://github.com/user-attachments/assets/7a39637c-706c-4997-80b0-53701cd51fa9" />
 
 ### RESULT:
 Thus the program run successfully based on the Holt Winters Method model.
