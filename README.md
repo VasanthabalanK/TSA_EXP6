@@ -27,26 +27,19 @@ import numpy as np
 import warnings
 warnings.filterwarnings("ignore")
 
-# Load dataset
 data = pd.read_csv('/content/jee_mains_2013_to_2025_top_30_ranks.csv')
 
-# Focus on 'Year' and 'Total_Marks'
 jee_data = data[['Year', 'Total_Marks']]
 
-# Step 1: Aggregate by Year (average Total Marks)
 jee_yearly = jee_data.groupby('Year')['Total_Marks'].mean().reset_index()
 
-# Convert 'Year' to datetime for time-series
 jee_yearly['Date'] = pd.to_datetime(jee_yearly['Year'], format='%Y')
 jee_yearly.set_index('Date', inplace=True)
 
-# Step 2: Resample yearly (though data already yearly, this keeps structure)
 jee_yearly = jee_yearly.resample('YS').mean()
 
-# Preview
 print(jee_yearly.head())
 
-# Step 3: Plot original data
 jee_yearly.plot(figsize=(10, 6))
 plt.title('Average JEE Total Marks per Year (Top 30)')
 plt.ylabel('Average Total Marks')
@@ -54,14 +47,11 @@ plt.xlabel('Year')
 plt.grid(True)
 plt.show()
 
-# Step 4: Scale the Total Marks column
 scaler = MinMaxScaler()
 scaled_marks = scaler.fit_transform(jee_yearly['Total_Marks'].values.reshape(-1, 1)).flatten()
 
-# Create time series
 scaled_data = pd.Series(scaled_marks, index=jee_yearly.index)
 
-# Step 5: Plot scaled data
 plt.figure(figsize=(10, 6))
 scaled_data.plot()
 plt.title('Scaled JEE Total Marks (Top 30)')
@@ -70,13 +60,11 @@ plt.xlabel('Year')
 plt.grid(True)
 plt.show()
 
-# Step 6: Decompose data to view trend/seasonality
 if len(scaled_data) >= 6:  # Decomposition needs enough data points
     decomposition = seasonal_decompose(scaled_data, model="additive", period=3)
     decomposition.plot()
     plt.show()
 
-# Step 7: Train-Test Split (80-20)
 train_data = scaled_data[:int(len(scaled_data) * 0.8)]
 test_data = scaled_data[int(len(scaled_data) * 0.8):]
 
@@ -88,13 +76,10 @@ plt.title('Train-Test Split')
 plt.grid(True)
 plt.show()
 
-# Step 8: Holt-Winters Model
 model_add = ExponentialSmoothing(train_data, trend='add', seasonal='add', seasonal_periods=3).fit()
 
-# Forecast for test period
 test_predictions = model_add.forecast(steps=len(test_data))
 
-# Plot predictions
 plt.figure(figsize=(10, 6))
 train_data.plot(label='Train Data')
 test_data.plot(label='Test Data')
@@ -104,25 +89,19 @@ plt.title('Holt-Winters Model Predictions (JEE Marks)')
 plt.grid(True)
 plt.show()
 
-# Step 9: Evaluate Model
 rmse = np.sqrt(mean_squared_error(test_data, test_predictions))
 mae = mean_absolute_error(test_data, test_predictions)
 print(f'RMSE: {rmse:.4f}')
 print(f'MAE: {mae:.4f}')
 
-# Step 10: Train final model on full dataset
 final_model = ExponentialSmoothing(scaled_data, trend='add', seasonal='add', seasonal_periods=3).fit()
 
-# Forecast next 3 years
 final_predictions = final_model.forecast(steps=3)
 
-# Inverse transform back to original marks scale
 forecast_original = scaler.inverse_transform(final_predictions.values.reshape(-1, 1)).flatten()
 
-# Future years for plotting
 future_years = pd.date_range(start=jee_yearly.index[-1] + pd.DateOffset(years=1), periods=3, freq='YS')
 
-# Step 11: Plot results
 plt.figure(figsize=(10, 6))
 jee_yearly['Total_Marks'].plot(label='Actual Data')
 plt.plot(future_years, forecast_original, label='Future Predictions', linestyle='--', marker='o')
@@ -133,7 +112,6 @@ plt.xlabel('Year')
 plt.grid(True)
 plt.show()
 
-# Step 12: Print predicted values
 forecast_df = pd.DataFrame({
     'Year': future_years.year,
     'Predicted_Avg_Total_Marks': forecast_original
